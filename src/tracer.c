@@ -560,6 +560,8 @@ tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
 	   PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK);
 
     struct ptrace_syscall_info info;
+	memset(&info, 0, sizeof(struct ptrace_syscall_info));
+
     static size_t running = 1;
 
     int status;
@@ -692,6 +694,8 @@ run_and_record_fnames(char **av, char **envp)
     if (pid < 0)
 	error(EXIT_FAILURE, errno, "in original fork()");
     else if (pid == 0)
+	
+	//tracee is the "examined" process
 	run_tracee(av);
 
     init();

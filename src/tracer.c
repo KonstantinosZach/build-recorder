@@ -64,6 +64,8 @@ init(void)
     numfinfo = -1;
 }
 
+//returns the next available position in the array pids[]
+//if the array is full a reallocation of (x2) is happening
 PROCESS_INFO *
 next_pinfo(pid_t pid)
 {
@@ -82,6 +84,8 @@ next_pinfo(pid_t pid)
     return pinfo + (++numpinfo);
 }
 
+//returns the next available position in the array finfo[]
+//if the array is full a reallocation of (x2) is happening
 FILE_INFO *
 next_finfo(void)
 {
@@ -95,11 +99,11 @@ next_finfo(void)
     return finfo + (++numfinfo);
 }
 
+//initialises (allocates) a new PROCESS_INFO struct
 void
 pinfo_new(PROCESS_INFO *self, char ignore_one_sigstop)
 {
-    static int pcount = 0;
-
+    static int pcount = 0; //pcount is initialised once
     sprintf(self->outname, ":p%d", pcount++);
     self->finfo_size = DEFAULT_FINFO_SIZE;
     self->numfinfo = -1;
@@ -108,10 +112,11 @@ pinfo_new(PROCESS_INFO *self, char ignore_one_sigstop)
     self->ignore_one_sigstop = ignore_one_sigstop;
 }
 
+//initialises (allocates) a new FILE_INFO struct
 void
 finfo_new(FILE_INFO *self, char *path, char *abspath, char *hash)
 {
-    static int fcount = 0;
+    static int fcount = 0; //fcount is initialised once
 
     self->path = path;
     self->abspath = abspath;
@@ -119,6 +124,7 @@ finfo_new(FILE_INFO *self, char *path, char *abspath, char *hash)
     sprintf(self->outname, ":f%d", fcount++);
 }
 
+//checks whether the process with this pid already exists in the array pids[]
 PROCESS_INFO *
 find_pinfo(pid_t pid)
 {
@@ -135,6 +141,7 @@ find_pinfo(pid_t pid)
     return pinfo + i;
 }
 
+//checks whether the file already exists in the array finfo[]
 FILE_INFO *
 find_finfo(char *abspath, char *hash)
 {
@@ -159,6 +166,7 @@ find_finfo(char *abspath, char *hash)
     return finfo + i;
 }
 
+//checks and returns if the file descripton exists inside the fd[] of PROCESS_INFO var
 FILE_INFO *
 pinfo_find_finfo(PROCESS_INFO *self, int fd)
 {
@@ -175,6 +183,8 @@ pinfo_find_finfo(PROCESS_INFO *self, int fd)
     return self->finfo + i;
 }
 
+//returns the next available position in the array fd[] of PROCESS_INFO var
+//if the array is full a reallocation of (x2) is happening
 FILE_INFO *
 pinfo_next_finfo(PROCESS_INFO *self, int fd)
 {
@@ -276,6 +286,8 @@ handle_open(pid_t pid, PROCESS_INFO *pi, int fd, int dirfd, void *path,
 
     FILE_INFO *f = NULL;
 
+	//O_ACCMODE is a mask that can be bitwise-ANDed with the file status 
+	//flag value to recover the file access mode
     if ((purpose & O_ACCMODE) == O_RDONLY) {
 	char *hash = get_file_hash(abspath);
 
@@ -304,6 +316,7 @@ handle_execve(pid_t pid, PROCESS_INFO *pi, int dirfd, char *path)
 {
     record_process_start(pid, pi->outname);
 
+	//searches the path of pid, ex: /usr/bin/ls
     char *abspath = absolutepath(pid, dirfd, path);
 
     if (!abspath) {
@@ -318,13 +331,16 @@ handle_execve(pid_t pid, PROCESS_INFO *pi, int dirfd, char *path)
 	}
     }
 
+	//from the file contents creates the hash
     char *hash = get_file_hash(abspath);
 
     FILE_INFO *f;
 
+	//check if file exists in the array finfo
     if (!(f = find_finfo(abspath, hash))) {
+	//if not take the next available pos
 	f = next_finfo();
-
+	//create the new finfo and record the file
 	finfo_new(f, path, abspath, hash);
 	record_file(f->outname, path, abspath);
 	record_hash(f->outname, f->hash);
@@ -396,8 +412,7 @@ handle_syscall_entry(pid_t pid, PROCESS_INFO *pi,
 {
     int olddirfd;
     char *oldpath;
-
-    switch (entry->entry.nr) {
+    switch (entry->entry.nr) { //nr is the system call number
 	case SYS_rename:
 	    // int rename(const char *oldpath, const char *newpath);
 	    oldpath = get_str_from_process(pid, (void *) entry->entry.args[0]);
@@ -425,7 +440,7 @@ handle_syscall_entry(pid_t pid, PROCESS_INFO *pi,
 	    pi->entry_info =
 		    get_str_from_process(pid, (void *) entry->entry.args[1]);
 	    break;
-    }
+	}
 }
 
 static void
@@ -552,19 +567,26 @@ handle_syscall_exit(pid_t pid, PROCESS_INFO *pi,
 static void
 tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
 {
+	//synchronise main process with child
     waitpid(pid, NULL, 0);
 
+	//outputs enviroment parameters
     record_process_env(pi->outname, envp);
+	//handles the execvp that started the child
     handle_execve(pid, pi, AT_FDCWD, path);
 
+	//options about how to interact with the tracee
     ptrace(PTRACE_SETOPTIONS, pid, NULL,	// Options are inherited
-	   PTRACE_O_EXITKILL | PTRACE_O_TRACESYSGOOD | PTRACE_O_TRACECLONE |
-	   PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK);
+	   PTRACE_O_EXITKILL | 
+	   PTRACE_O_TRACESYSGOOD | /*to distinguish normal traps from those caused by a system cal*/
+	   PTRACE_O_TRACECLONE |
+	   PTRACE_O_TRACEFORK | 
+	   PTRACE_O_TRACEVFORK);
 
     struct ptrace_syscall_info info;
-	memset(&info, 0, sizeof(struct ptrace_syscall_info));
+	memset(&info, 0, sizeof(struct ptrace_syscall_info));	//inits info
 
-    static size_t running = 1;
+    static size_t running = 1;	//running is initialised once
 
     int status;
     PROCESS_INFO *process_state;
@@ -575,22 +597,30 @@ tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
     }
 
     while (running) {
+	//with the wait calls tracer can interact with the tracee
+	//and check what caused the stoping
 	pid = wait(&status);
 
 	if (pid < 0) {
 	    error(EXIT_FAILURE, errno, "wait failed");
 	}
 
+	//If restart_sig is nonzero,it is interpreted as the number of a signal to be 
+	//delivered to the tracee after the restarting
 	unsigned int restart_sig = 0;
 
+	//check if the child process was stopped by delivery of a signal
 	if (WIFSTOPPED(status)) {
+		//returns the number of the signal which caused the child to stop
 	    switch (WSTOPSIG(status)) {
+		//syscall-stops
 		case SIGTRAP | 0x80:
 		    process_state = find_pinfo(pid);
 		    if (!process_state) {
 			error(EXIT_FAILURE, 0, "find_pinfo on syscall sigtrap");
 		    }
 
+			//get information about the syscall
 		    if (ptrace
 			(PTRACE_GET_SYSCALL_INFO, pid, (void *) sizeof (info),
 			 &info) < 0) {
@@ -598,6 +628,7 @@ tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
 			      "tracee PTRACE_GET_SYSCALL_INFO failed");
 		    }
 
+			//check whether its an entry or exit point
 		    switch (info.op) {
 			case PTRACE_SYSCALL_INFO_ENTRY:
 			    process_state->state = info;
@@ -616,14 +647,18 @@ tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
 		case SIGSTOP:
 		    // We only want to ignore post-attach SIGSTOP, for the
 		    // rest we shouldn't mess with.
+			//check if the process already exist
 		    if ((process_state = find_pinfo(pid))) {
 			if (process_state->ignore_one_sigstop == 0) {
+				//if the ignore_one_sigstop is 0 that means that we have ignored previously the signal
+				//so we feed the process the same signal that we caught
 			    restart_sig = WSTOPSIG(status);
 			} else {
 			    ++running;
 			    process_state->ignore_one_sigstop = 0;
 			}
 		    } else {
+			//process added
 			++running;
 			PROCESS_INFO *pi = next_pinfo(pid);
 
@@ -643,6 +678,7 @@ tracer_main(pid_t pid, PROCESS_INFO *pi, char *path, char **envp)
 		error(EXIT_FAILURE, errno, "failed restarting process");
 	    }
 	} else if (WIFEXITED(status)) {	// child process exited 
+		//process is removed
 	    --running;
 
 	    process_state = find_pinfo(pid);
@@ -672,21 +708,27 @@ trace(pid_t pid, char *path, char **envp)
 {
     PROCESS_INFO *pi;
 
+	//pid is the child process
     pi = next_pinfo(pid);
 
     pinfo_new(pi, 0);
 
+	//pi now stores the PROCESS_INFO of the child
+	//path is child process's path
     tracer_main(pid, pi, path, envp);
 }
 
 void
 run_tracee(char **av)
 {
+	//PTRACE_TRACEME indicates that this process is to be traced by its parent
     ptrace(PTRACE_TRACEME, NULL, NULL, NULL);
     execvp(*av, av);
     error(EXIT_FAILURE, errno, "after child exec()");
 }
 
+//argv is what we want to compile
+//envp are enviroment parameters
 void
 run_and_record_fnames(char **av, char **envp)
 {
@@ -695,11 +737,13 @@ run_and_record_fnames(char **av, char **envp)
     pid = fork();
     if (pid < 0)
 	error(EXIT_FAILURE, errno, "in original fork()");
-    else if (pid == 0)
-	
+    else if (pid == 0){
+	//child process (tracee) will run the wanted program (av) with execvp
 	//tracee is the "examined" process
-	run_tracee(av);
+	run_tracee(av);	
+	}
 
+	//parent will get ready to be the tracer
     init();
     trace(pid, *av, envp);
 }
